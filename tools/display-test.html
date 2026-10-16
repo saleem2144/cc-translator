@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Display test</title>
+  <link rel="stylesheet" href="../extension/content.css">
+  <style>
+    body { margin: 0; background: #222; color: #eee; font: 14px system-ui, sans-serif; }
+    video { display: block; width: 640px; height: 360px; margin: 20px; background: #000; }
+    #log { margin: 0 20px; white-space: pre; font: 12px monospace; }
+  </style>
+</head>
+<body>
+  <video id="v" muted></video>
+  <div id="log"></div>
+  <script>
+    // Minimal stand-in for the extension APIs the content script uses.
+    const listeners = [];
+    window.chrome = {
+      runtime: { onMessage: { addListener: fn => listeners.push(fn) } },
+      storage: {
+        sync: { get: async () => ({}), set: async () => {} },
+        onChanged: { addListener: () => {} },
+      },
+    };
+    window.send = msg => listeners.forEach(fn => fn(msg, {}, () => {}));
+
+    // A playing video (canvas stream) so currentTime advances like a real player.
+    const canvas = Object.assign(document.createElement('canvas'), { width: 64, height: 36 });
+    const ctx = canvas.getContext('2d');
+    setInterval(() => { ctx.fillStyle = `hsl(${Date.now() / 20 % 360},50%,30%)`; ctx.fillRect(0, 0, 64, 36); }, 50);
+    const video = document.getElementById('v');
+    video.srcObject = canvas.captureStream(20);
+    // ?frozen=1 simulates a player whose currentTime never advances.
+    if (!new URLSearchParams(location.search).has('frozen')) video.play();
+  </script>
+  <script src="../extension/settings.js"></script>
+  <script src="../extension/content.js"></script>
+  <script>
+    // Replays a real sequence from the helper log, timed like the original.
+    const t0 = Date.now() + 1000; // stream "time 0" in wall-clock ms
+    const msg = (type, id, start, end, es, en) =>
+      ({ type, id, start, end, es, en, startMs: t0 + start * 1000, endMs: t0 + end * 1000 });
+    const script = [
+      // [seconds after page load, message]
+      [0.2, { type: 'captions-on' }],
+      [0.3, { type: 'status', state: 'connected' }],
+      [2.0, msg('partial', 0, 1.0, 1.7, 'Puede ser...', 'It may be...')],
+      [2.5, msg('partial', 0, 1.0, 2.2, 'Puede ser muy probable que...', 'It may be very likely that...')],
+      [3.0, msg('partial', 0, 1.0, 2.7, 'Puede ser muy probable que vaya a reprobar...', "It may be very likely that he's going to fail...")],
+      [3.5, msg('partial', 0, 1.0, 3.2, 'Puede ser muy probable que vaya a reprobar el examen.', 'It may be very likely that you will fail the test.')],
+      [4.0, msg('partial', 0, 1.0, 3.7, 'Puede ser muy probable que vaya a reprobar el examen de admisión.', 'It may be very likely that you will fail the admission exam.')],
+      [4.5, { type: 'speech_end', id: 0, start: 1.0, end: 4.2 }],
+      [5.3, msg('caption', 0, 1.0, 4.2, 'Puede ser muy probable que vaya a reprobar el examen de admisión.', 'It may be very likely that you will fail the admission exam.')],
+      [7.0, msg('partial', 1, 6.0, 6.7, 'Por eso.', "That's why.")],
+      [7.5, msg('partial', 1, 6.0, 7.2, 'Por eso. Porque es...', "That's why. Because it's...")],
+      [8.6, msg('caption', 1, 6.0, 7.8, 'Porque eso es lo que pasa.', "Because that's what happens.")],
+    ];
+    // ?flicker=1 replays guesses from the real log that changed back and forth, 0.27 s apart.
+    if (new URLSearchParams(location.search).has('flicker')) {
+      const guesses = [
+        ['Donde', 'Where'], ['Don Díaz.', 'Don Diaz.'], ['Don Díaz de la.', 'Don Diaz de la.'],
+        ['Donde está la edad?', "Where's the age?"], ['Donde está la esta.', 'Where she is.'],
+        ['Donde está la estancia?', "Where's the stay?"], ['Donde está la estación?', "Where's the station?"],
+        ['Donde está la estación de trabajo.', 'Where the workstation is.'],
+        ['Donde está la estación de tren?', "Where's the train station?"],
+        ['Donde está la estación de tren?', "Where's the train station?"],
+        ['Donde está la estación de tren?', "Where's the train station?"],
+      ];
+      script.splice(2);
+      guesses.forEach(([es, en], i) => script.push([2 + i * 0.27, msg('partial', 0, 1.0, 1.7 + i * 0.27, es, en)]));
+      script.push([5.3, msg('caption', 0, 1.0, 4.4, '¿Dónde está la estación de tren?', "Where's the train station?")]);
+    }
+
+    const start = Date.now();
+    for (const [at, m] of script) setTimeout(() => send(m), at * 1000);
+
+    // Record what the overlay shows every 250 ms.
+    const log = document.getElementById('log');
+    window.shown = [];
+    let last = '';
+    setInterval(() => {
+      const o = document.getElementById('cc-tr-overlay');
+      const text = o ? [...o.children].map(c => (c.classList.contains('cc-tr-partial') ? '~' : '') + c.textContent).join(' / ') : '(no overlay)';
+      if (text !== last) {
+        last = text;
+        const line = `${((Date.now() - start) / 1000).toFixed(2)}s  ${text || '(empty)'}`;
+        window.shown.push(line);
+        log.textContent = window.shown.join('\n');
+      }
+    }, 50);
+  </script>
+</body>
+</html>

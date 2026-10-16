@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { width: 420px; margin: 0; padding: 14px; font: 13px system-ui, sans-serif; color: #1d1d1f; background: #fff; }
+    h1 { font-size: 15px; margin: 0 0 4px; }
+    p.hint { margin: 0 0 10px; color: #555; }
+    button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid #bbb; background: #f4f4f4; cursor: pointer; }
+    button.primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }
+    button:disabled { opacity: .5; cursor: default; }
+    .row { display: flex; gap: 6px; margin-bottom: 10px; }
+    #status { min-height: 18px; margin-bottom: 10px; font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+    th, td { text-align: left; padding: 4px 4px; border-bottom: 1px solid #e3e3e3; vertical-align: top; }
+    th { font-size: 11px; color: #666; font-weight: 600; }
+    .ok { color: #137333; } .bad { color: #c5221f; } .warn { color: #b06000; }
+    details { margin-top: 2px; } summary { cursor: pointer; color: #1a73e8; }
+    img { width: 100%; border: 1px solid #ddd; margin-top: 4px; }
+    pre { white-space: pre-wrap; font-size: 11px; background: #f6f6f6; padding: 6px; margin: 4px 0 0; }
+  </style>
+</head>
+<body>
+  <h1>Phase 0 feasibility test</h1>
+  <p class="hint">Start a video with sound, then press Run. Don't click the page while the test runs (about 10 seconds) or this popup will close.</p>
+  <div class="row">
+    <button id="run" class="primary">Run test on this tab</button>
+    <button id="copy">Copy results</button>
+    <button id="clear">Clear</button>
+  </div>
+  <div id="status"></div>
+  <div id="results"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

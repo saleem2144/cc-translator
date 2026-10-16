@@ -1,0 +1,6 @@
+helper/.venv/
+helper/models/
+__pycache__/
+*.pyc
+helper/helper.log
+.claude/

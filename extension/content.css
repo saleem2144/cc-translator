@@ -1,0 +1,42 @@
+/* Hide each site's own subtitles while CC Translator is on. */
+html.cc-tr-active .ytp-caption-window-container,           /* YouTube */
+html.cc-tr-active .player-timedtext,                       /* Netflix */
+html.cc-tr-active .dss-subtitle-renderer-wrapper,          /* Disney+ */
+html.cc-tr-active .hive-subtitle-renderer-wrapper,         /* Disney+ (newer player) */
+html.cc-tr-active .atvwebplayersdk-captions-overlay,       /* Prime Video */
+html.cc-tr-active #velocity-canvas,                        /* Crunchyroll */
+html.cc-tr-active .vjs-text-track-display {                /* Crunchyroll (older player) */
+  display: none !important;
+}
+html.cc-tr-active video::cue { opacity: 0 !important; }   /* Native <track> subtitles */
+
+#cc-tr-overlay {
+  position: fixed;
+  z-index: 2147483647;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  transform: translate(-50%, -100%);
+  text-align: center;
+  font-family: system-ui, "Segoe UI", Arial, sans-serif;
+  font-weight: 600;
+  line-height: 1.25;
+}
+#cc-tr-overlay .cc-tr-line {
+  max-width: 100%;
+  padding: 2px 10px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.72);
+  text-shadow: 0 1px 2px #000;
+}
+#cc-tr-overlay .cc-tr-es { color: #ffffff; }
+#cc-tr-overlay .cc-tr-en { color: #ffe066; }
+#cc-tr-overlay .cc-tr-partial { font-style: italic; opacity: 0.9; }  /* still being spoken */
+#cc-tr-overlay .cc-tr-status {
+  color: #ddd;
+  font-size: 14px;
+  font-weight: 500;
+}
+#cc-tr-overlay:empty { display: none; }

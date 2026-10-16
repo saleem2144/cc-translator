@@ -1,0 +1,17 @@
+[project]
+name = "cc-translator-helper"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "faster-whisper>=1.2.1",
+    "nvidia-cublas-cu12>=12.9.2.10",
+    "nvidia-cudnn-cu12>=9,<10",
+    "sentencepiece>=0.2.2",
+    "websockets>=17.2",
+]
+
+[dependency-groups]
+convert = [
+    "torch>=2.14.1",
+    "transformers>=5.20.0",
+]

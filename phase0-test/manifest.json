@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "CC Translator - Phase 0 Test",
+  "version": "0.0.1",
+  "description": "Checks whether a site lets an extension capture tab audio and video, and control its video player.",
+  "permissions": ["tabCapture", "activeTab", "scripting", "storage"],
+  "action": {
+    "default_title": "Run Phase 0 test",
+    "default_popup": "popup.html"
+  }
+}
