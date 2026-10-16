@@ -7,7 +7,7 @@ let session = null;
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.target !== 'offscreen') return;
   if (msg.type === 'start') {
-    start(msg.streamId, msg.helperUrl).then(() => sendResponse({ ok: true }),
+    start(msg.streamId, msg.helperUrl, msg.playback !== false).then(() => sendResponse({ ok: true }),
       err => { report('error', String(err.message || err)); sendResponse({ ok: false }); });
     return true;
   }
@@ -21,15 +21,16 @@ function report(state, detail = '') {
   forward({ type: 'status', state, detail });
 }
 
-async function start(streamId, helperUrl) {
+async function start(streamId, helperUrl, playback) {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: streamId } },
     video: false,
   });
 
   // Capturing mutes the tab, so play the audio back at its original quality.
+  // Synced mode turns this off: the copy playing ahead must stay silent.
   const playCtx = new AudioContext();
-  playCtx.createMediaStreamSource(stream).connect(playCtx.destination);
+  if (playback) playCtx.createMediaStreamSource(stream).connect(playCtx.destination);
 
   // A second context at 16 kHz feeds the speech recogniser.
   const capCtx = new AudioContext({ sampleRate: SAMPLE_RATE });

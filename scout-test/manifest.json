@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "CC Translator - Scout Tab Test",
+  "version": "0.0.2",
+  "description": "Checks whether a second, hidden copy of a Crunchyroll episode can play ahead and be listened to.",
+  "permissions": ["tabCapture", "scripting", "tabs", "storage", "offscreen"],
+  "host_permissions": ["https://www.crunchyroll.com/*", "https://static.crunchyroll.com/*"],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_title": "Run scout tab test",
+    "default_popup": "popup.html"
+  }
+}

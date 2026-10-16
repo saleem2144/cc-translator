@@ -12,6 +12,7 @@ var DEFAULT_SETTINGS = {
   position: 88,          // % from the top of the video
   timing: 'live',        // 'live' | 'wait'
   holdSeconds: 2,        // 'wait' mode: how long to show a line before resuming
+  syncedCrunchyroll: false, // Crunchyroll: caption a muted copy playing ahead, for perfectly timed lines
 };
 
 async function loadSettings() {

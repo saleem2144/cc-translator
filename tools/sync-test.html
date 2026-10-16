@@ -1,0 +1,99 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Sync test</title>
+  <link rel="stylesheet" href="../extension/content.css">
+  <style>
+    body { margin: 0; background: #222; color: #eee; font: 14px system-ui, sans-serif; }
+    video { display: block; width: 640px; height: 360px; margin: 20px; background: #000; }
+    #log { margin: 0 20px; white-space: pre; font: 12px monospace; }
+  </style>
+</head>
+<body>
+  <video id="v"></video>
+  <div id="log"></div>
+  <script>
+    // Simulates synced mode without Crunchyroll: a fake episode player and a fake
+    // copy that drifts behind (stalls 0.4 s every 3 s, like the real test showed).
+    const main = { time: 100, paused: false, rate: 1 };
+    const scout = { time: 108, paused: false, rate: 1 };
+    const v = document.getElementById('v');
+    Object.defineProperty(v, 'currentTime', { get: () => main.time, set: t => { main.time = t; } });
+    Object.defineProperty(v, 'paused', { get: () => main.paused });
+    Object.defineProperty(v, 'playbackRate', { get: () => main.rate, set: r => { main.rate = r; } });
+    Object.defineProperty(v, 'readyState', { get: () => 4 });
+    v.play = async () => { main.paused = false; };
+    v.pause = () => { main.paused = true; };
+
+    let last = performance.now();
+    let stallUntil = 0;
+    setInterval(() => { stallUntil = performance.now() + 400; }, 3000);
+    setInterval(() => {
+      const now = performance.now();
+      const dt = (now - last) / 1000;
+      last = now;
+      if (!main.paused) main.time += dt * main.rate;
+      if (!scout.paused && now > stallUntil) scout.time += dt * scout.rate;
+    }, 20);
+
+    const listeners = [];
+    window.chrome = {
+      runtime: {
+        onMessage: { addListener: fn => listeners.push(fn) },
+        sendMessage: async msg => {
+          if (msg.type !== 'scout-cmd') return null;
+          switch (msg.cmd) {
+            case 'time': return { found: true, ready: true, time: scout.time, paused: scout.paused, rate: scout.rate };
+            case 'pause': scout.paused = true; break;
+            case 'play': scout.paused = false; break;
+            case 'seek': scout.time = msg.value; break;
+            case 'rate': scout.rate = msg.value; break;
+          }
+          return { found: true };
+        },
+      },
+      storage: { sync: { get: async () => ({}), set: async () => {} }, onChanged: { addListener: () => {} } },
+    };
+    window.send = msg => listeners.forEach(fn => fn(msg, {}, () => {}));
+  </script>
+  <script src="../extension/settings.js"></script>
+  <script src="../extension/content.js"></script>
+  <script>
+    const t0 = performance.now();
+    const at = (s, fn) => setTimeout(fn, s * 1000);
+    at(0.1, () => send({ type: 'captions-on', mode: 'synced' }));
+    at(0.2, () => send({ type: 'status', state: 'connected' }));
+    // Lines heard ahead by the copy, saved at their video times.
+    at(0.3, () => {
+      // Back-to-back lines (0.1 s apart) must both survive.
+      send({ type: 'synced-caption', start: 102, end: 103.5, es: 'Hola, ¿qué tal?', en: 'Hi, how are you?' });
+      send({ type: 'synced-caption', start: 103.6, end: 105.2, es: 'Muy bien.', en: 'Very well.' });
+      // A re-heard copy of the second line (as after a rewind) should replace it, not add a duplicate.
+      send({ type: 'synced-caption', start: 103.7, end: 105.1, es: 'Muy bien, gracias.', en: 'Very well, thanks.' });
+    });
+    at(0.4, () => send({ type: 'synced-ready', lead: 8 }));
+    at(20, () => { main.time -= 15; window.events.push('20s: viewer rewinds 15 s'); });
+    at(26, () => { v.pause(); window.events.push('26s: viewer pauses'); });
+    at(29, () => { v.play(); window.events.push('29s: viewer resumes'); });
+
+    window.events = [];
+    window.samples = [];
+    window.shown = [];
+    let lastShown = '';
+    setInterval(() => {
+      const o = document.getElementById('cc-tr-overlay');
+      const text = o ? [...o.children].map(c => c.textContent).join(' / ') : '';
+      if (text !== lastShown) {
+        lastShown = text;
+        window.shown.push(`video ${main.time.toFixed(2)}s: ${text || '(nothing)'}`);
+      }
+    }, 50);
+    setInterval(() => {
+      const s = ((performance.now() - t0) / 1000).toFixed(0);
+      window.samples.push(`${s.padStart(2)}s  lead ${(scout.time - main.time).toFixed(2)}s  copy speed ${scout.rate}  copy ${scout.paused ? 'paused' : 'playing'}`);
+      document.getElementById('log').textContent = [...window.events, '', ...window.samples, '', ...window.shown].join('\n');
+    }, 1000);
+  </script>
+</body>
+</html>

@@ -1,5 +1,7 @@
 // Content script: draws the Spanish + English captions over the video,
 // hides the site's own subtitles, and (when enabled) "wait for each line" mode.
+// In synced mode it also either drives the muted copy that plays ahead (on the
+// episode's page) or reports the copy's video clock (on the copy's page).
 
 (() => {
   const LIVE_EXTRA_MS = 1500;     // keep a live line up this long past its spoken length
@@ -8,9 +10,10 @@
   const PARTIAL_STALE_MS = 3000;  // drop an in-progress guess if no update arrives
   const WAIT_SAFETY_MS = 8000;    // never keep the video paused longer than this
   const REPLAY_MARGIN_S = 2;      // video this far behind the newest caption = the user rewound
+  const SYNC_EVERY_MS = 1000;     // synced mode: how often to check the copy's lead
 
   // Counters shown in the popup's diagnostics line.
-  const debug = { partial: 0, caption: 0, ignoredPartial: 0, shown: 'nothing' };
+  const debug = { partial: 0, caption: 0, ignoredPartial: 0, shown: 'nothing', lead: null, replaced: 0, jumps: 0 };
 
   let settings = { ...DEFAULT_SETTINGS };
   let active = false;
@@ -23,6 +26,12 @@
   let statusText = '';
   let clockSamples = [];          // [{wall, vt, rate, paused}] to map wall-clock time to video time
   let waitPause = null;           // {timer} while paused in 'wait' mode
+  let syncedMode = false;         // this page is the episode, captioned from a copy playing ahead
+  let syncLead = 8;
+  let syncBias = 0;               // learned extra speed that cancels the copy's drift
+  let syncTimer = null;
+  let syncHref = null;
+  let scoutClockTimer = null;     // this page is the copy: keep recording its clock
 
   loadSettings().then(s => { settings = s; });
   chrome.storage.onChanged.addListener(changes => {
@@ -32,11 +41,21 @@
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'ping') { sendResponse({ pong: true }); return; }
     if (msg.type === 'debug') { sendResponse(debugInfo()); return; }
+    if (msg.type === 'video-cmd') { sendResponse(videoCmd(msg.cmd, msg.value)); return; }
+    if (msg.type === 'to-video-time') {
+      sendResponse({ start: videoTimeAt(msg.startMs), end: videoTimeAt(msg.endMs) });
+      return;
+    }
     if (msg.type === 'captions-off') { turnOff(); return; }
-    turnOn(); // any other message means captions are running for this tab
+    turnOn(msg.type === 'captions-on' ? msg.mode : undefined); // any other message means captions are running here
     if (msg.es) console.debug(`[CC Translator] ${msg.type} #${msg.id}: ${msg.es} | ${msg.en}`);
     switch (msg.type) {
       case 'status': onStatus(msg); break;
+      case 'synced-caption': onSyncedCaption(msg); break;
+      case 'synced-ready': startSyncing(msg.lead); break;
+    }
+    if (syncedMode) return; // the messages below are for live mode only
+    switch (msg.type) {
       case 'speech_end': onSpeechEnd(); break;
       case 'partial': onPartial(msg); break;
       case 'caption': onCaption(msg); break;
@@ -48,9 +67,13 @@
     return WAIT_MODE_ENABLED ? settings.timing : 'live';
   }
 
-  function turnOn() {
-    if (active) return;
+  function turnOn(mode) {
+    if (active) {
+      if (mode) syncedMode = mode === 'synced';
+      return;
+    }
     active = true;
+    syncedMode = mode === 'synced';
     saved = [];
     live = null;
     partial = null;
@@ -63,6 +86,9 @@
   function turnOff() {
     active = false;
     clearInterval(tickTimer);
+    clearInterval(syncTimer);
+    syncTimer = null;
+    syncedMode = false;
     endWaitPause();
     document.documentElement.classList.remove('cc-tr-active');
     overlay?.remove();
@@ -70,9 +96,99 @@
   }
 
   function onStatus({ state, detail }) {
-    if (state === 'connected') statusText = 'Listening...';
+    if (state === 'connected') statusText = syncedMode ? '' : 'Listening...';
+    else if (state === 'info') statusText = detail;
     else if (state === 'error') statusText = detail || 'Helper error';
     else if (state === 'disconnected') statusText = detail || 'Helper disconnected';
+  }
+
+  // --- Synced mode ---------------------------------------------------------
+
+  // Read or control this page's video. Used on both pages in synced mode.
+  function videoCmd(cmd, value) {
+    const v = findVideo();
+    if (cmd === 'scout-init') { startScoutClock(); return { ok: true }; }
+    if (!v) return { found: false };
+    switch (cmd) {
+      case 'time': return { found: true, ready: v.readyState >= 2, time: v.currentTime, paused: v.paused, rate: v.playbackRate };
+      case 'pause': v.pause(); break;
+      case 'play': v.play().catch(() => {}); break;
+      case 'seek': v.currentTime = value; break;
+      case 'rate': v.playbackRate = value; break;
+    }
+    return { found: true };
+  }
+
+  // On the copy's page: record its clock so caption times can be converted to its video time.
+  function startScoutClock() {
+    if (scoutClockTimer) return;
+    scoutClockTimer = setInterval(() => {
+      const v = findVideo();
+      if (v) recordClock(v);
+    }, 100);
+  }
+
+  function onSyncedCaption({ start, end, es, en }) {
+    debug.caption++;
+    // Replace a saved line only if it covers the same moment (the copy re-heard
+    // it after a rewind). Neighbouring lines that merely touch must both stay.
+    const before = saved.length;
+    saved = saved.filter(c => !sameMoment(c, { start, end }));
+    debug.replaced += before - saved.length;
+    saved.push({ start, end, es, en });
+    saved.sort((a, b) => a.start - b.start);
+  }
+
+  // True when two lines overlap by more than half of the shorter one.
+  function sameMoment(a, b) {
+    const overlap = Math.min(a.end, b.end) - Math.max(a.start, b.start);
+    const shorter = Math.max(0.1, Math.min(a.end - a.start, b.end - b.start));
+    return overlap > shorter / 2;
+  }
+
+  function startSyncing(lead) {
+    syncLead = lead;
+    syncBias = 0;
+    syncHref = location.href;
+    clearInterval(syncTimer);
+    syncTimer = setInterval(syncStep, SYNC_EVERY_MS);
+  }
+
+  const scoutCmd = (cmd, value) => chrome.runtime.sendMessage({ target: 'background', type: 'scout-cmd', cmd, value });
+
+  // Keep the copy LEAD seconds ahead: nudge its speed for small drift, jump it
+  // for big jumps (the viewer skipped or rewound), and mirror pause/play.
+  async function syncStep() {
+    const v = findVideo();
+    if (!v) return;
+    if (location.href !== syncHref) { // moved to another episode
+      chrome.runtime.sendMessage({ target: 'background', type: 'stop' });
+      return;
+    }
+    const s = await scoutCmd('time').catch(() => null);
+    if (!s?.found) return;
+
+    if (v.paused) {
+      if (!s.paused) scoutCmd('pause');
+      return;
+    }
+    const lead = s.time - v.currentTime;
+    debug.lead = Math.round(lead * 10) / 10;
+    if (lead < 1 || lead > syncLead + 6) {
+      debug.jumps++;
+      scoutCmd('rate', 1);
+      scoutCmd('seek', v.currentTime + syncLead);
+      if (s.paused) scoutCmd('play');
+      return;
+    }
+    if (s.paused) scoutCmd('play');
+    // The copy keeps losing a little time (it stalls briefly while buffering).
+    // syncBias learns how much extra speed cancels that out; the second term
+    // closes whatever gap remains.
+    const behind = syncLead - lead;
+    syncBias = Math.min(0.35, Math.max(-0.2, syncBias + 0.02 * behind));
+    const rate = Math.round(Math.min(1.4, Math.max(0.8, 1 + syncBias + 0.1 * behind)) * 100) / 100;
+    if (Math.abs(rate - s.rate) > 0.005) scoutCmd('rate', rate);
   }
 
   // --- Video and clock -----------------------------------------------------
@@ -111,6 +227,7 @@
     return {
       ...debug,
       active,
+      mode: syncedMode ? 'synced' : 'live',
       videos: document.querySelectorAll('video').length,
       videoTime: video ? Math.round(video.currentTime * 10) / 10 : null,
       videoPaused: video ? video.paused : null,
@@ -213,6 +330,14 @@
   }
 
   function captionToShow(video) {
+    if (syncedMode) {
+      // Every line was heard ahead of time: show it exactly when it's spoken.
+      // A line lingers 0.6 s after it ends; if the next has started, the newer one wins.
+      const t = video.currentTime;
+      const line = saved.findLast(c => t >= c.start - 0.1 && t <= c.end + 0.6);
+      debug.shown = line ? 'synced' : 'nothing';
+      return line || null;
+    }
     // After a rewind the video is behind the newest caption, and saved captions
     // can be shown perfectly in sync. Only then: during normal playback the
     // in-progress and latest captions always win.
